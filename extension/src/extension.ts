@@ -5,6 +5,7 @@ type LogItem = {
   session: string;
   category: string;
   output: string;
+  ansiSource?: boolean; // true = classified via ANSI color → let parseAnsi drive the color
 };
 
 class FlutterConsoleStore {
@@ -218,38 +219,98 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
   .root { height: 100%; display: flex; flex-direction: column; }
 
   /* ── Toolbar ───────────────────────────────────────────── */
-  .toolbar {
-    display: flex; gap: 6px; padding: 6px 8px; align-items: center;
+  .toolbar-main {
+    display: flex; gap: 4px; padding: 4px 8px; align-items: center;
     border-bottom: 1px solid var(--vscode-panel-border);
     background: var(--vscode-editor-background);
-    flex-wrap: wrap;
   }
+
+  /* Search bar — hidden by default, shown on Cmd+F */
+  .toolbar-search {
+    display: none;
+    gap: 6px; padding: 4px 8px; align-items: center;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-editor-background);
+  }
+  .toolbar-search.open { display: flex; }
+
   input, select, button {
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
-    padding: 4px 8px;
     border-radius: 3px;
     font: inherit;
     font-size: 12px;
   }
-  input { flex: 1; min-width: 200px; }
-  button { cursor: pointer; white-space: nowrap; }
-  button.primary {
+  select {
+    padding: 3px 4px;
+    cursor: pointer;
+    /* auto-width: no fixed width so browser sizes to content */
+    width: auto;
+  }
+  input { flex: 1; min-width: 180px; padding: 3px 8px; }
+  button {
+    cursor: pointer; white-space: nowrap;
+    padding: 3px 7px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  }
+
+  /* Icon-only action buttons */
+  .btn-icon {
+    background: transparent;
+    border-color: transparent;
+    padding: 3px 5px;
+    opacity: .75;
+    border-radius: 3px;
+  }
+  .btn-icon:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+  .btn-icon svg { display: block; }
+
+  /* Scroll-to-bottom — accent color */
+  #bottom {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border-color: transparent;
   }
-  button.primary:hover { background: var(--vscode-button-hoverBackground); }
+  #bottom:hover { background: var(--vscode-button-hoverBackground); }
 
-  .meta {
-    padding: 3px 8px;
-    border-bottom: 1px solid var(--vscode-panel-border);
+  /* Stats pushed to right */
+  .spacer { flex: 1; }
+  #stats { font-size: 11px; opacity: .65; white-space: nowrap; }
+
+  #closeSearch {
+    background: transparent; border-color: transparent;
+    opacity: .7; padding: 3px 6px; font-size: 13px;
+  }
+  #closeSearch:hover { opacity: 1; }
+
+  /* ── Search option toggles (Cc / W / .*) ─────────────────── */
+  .search-options {
+    display: inline-flex; gap: 2px; align-items: center;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    padding: 1px 2px;
+  }
+  .opt-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 1px 5px;
     font-size: 11px;
-    opacity: .8;
-    display: flex;
-    gap: 12px;
-    align-items: center;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--vscode-input-foreground);
+    opacity: .55;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .opt-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+  .opt-btn.active {
+    opacity: 1;
+    background: var(--vscode-inputOption-activeBackground, rgba(0,120,212,.3));
+    border-color: var(--vscode-inputOption-activeBorder, rgba(0,120,212,.6));
+    color: var(--vscode-inputOption-activeForeground, var(--vscode-input-foreground));
   }
 
   /* ── Log area ──────────────────────────────────────────── */
@@ -266,13 +327,16 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
     min-height: 1.45em;
   }
 
-  /* ── Log category colors (matching VSCode Debug Console) ── */
+  /* ── Log category colors — all use VS Code theme tokens ── */
   .stdout  { color: var(--vscode-debugConsole-infoForeground); }
   .console { color: var(--vscode-debugConsole-infoForeground); }
-  .stderr  { color: var(--vscode-debugConsole-errorForeground, #f14c4c); }
-  .warn    { color: var(--vscode-debugConsole-warningForeground, #cca700); }
+  .stderr  { color: var(--vscode-debugConsole-errorForeground); }
+  .warn    { color: var(--vscode-debugConsole-warningForeground); }
   .telemetry { color: var(--vscode-debugConsole-sourceForeground); opacity: .75; }
   .important { color: var(--vscode-debugConsole-infoForeground); font-weight: bold; }
+  .network   { color: var(--vscode-terminal-ansiCyan); }
+  /* Lines detected via ANSI: let parseAnsi() drive the color, don't override */
+  .ansi-source { color: inherit; }
 
   /* ── Search highlight ─────────────────────────────────── */
   mark.match {
@@ -302,8 +366,7 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
 <div class="root">
-  <div class="toolbar">
-    <input id="search" placeholder="Search… or /regex/i" title="Enter = next  Shift+Enter = prev" />
+  <div class="toolbar-main">
     <select id="category">
       <option value="all">All</option>
       <option value="stdout">stdout</option>
@@ -312,15 +375,39 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
       <option value="warn">warn</option>
       <option value="telemetry">telemetry</option>
       <option value="important">important</option>
+      <option value="network">network [log]</option>
     </select>
-    <button id="prev" title="Shift+Enter">▲</button>
-    <button id="next" title="Enter">▼</button>
-    <button id="clear">Clear</button>
-    <button id="bottom" class="primary">↓ Bottom</button>
-  </div>
-  <div class="meta">
+    <div class="spacer"></div>
     <span id="stats">0 logs</span>
-    <span id="matchStats"></span>
+    <!-- Clear: trash icon -->
+    <button id="clear" class="btn-icon" title="Clear logs">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm-1 0V2H6v1h3zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/>
+      </svg>
+    </button>
+    <!-- Bottom: scroll-to-bottom icon -->
+    <button id="bottom" title="Scroll to bottom">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 11.5L2.5 6h11L8 11.5z"/>
+        <rect x="2" y="13" width="12" height="1.5" rx="0.75"/>
+      </svg>
+    </button>
+  </div>
+  <div class="toolbar-search" id="searchBar">
+    <input id="search" placeholder="Search…" title="Enter = next  Shift+Enter = prev" />
+    <div class="search-options">
+      <button class="opt-btn" id="optCase"  title="Match Case (Alt+C)">Cc</button>
+      <button class="opt-btn" id="optWord"  title="Match Whole Word (Alt+W)">W</button>
+      <button class="opt-btn" id="optRegex" title="Use Regular Expression (Alt+R)">.*</button>
+    </div>
+    <button id="prev" class="btn-icon" title="Previous (Shift+Enter)">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 5L13.5 11h-11L8 5z"/></svg>
+    </button>
+    <button id="next" class="btn-icon" title="Next (Enter)">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 11L2.5 5h11L8 11z"/></svg>
+    </button>
+    <span id="matchStats" style="font-size:11px;opacity:.7;white-space:nowrap"></span>
+    <button id="closeSearch" title="Close (ESC)">✕</button>
   </div>
   <div id="logsWrap"><div id="logs"></div></div>
 </div>
@@ -333,6 +420,7 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
   const logsWrap   = document.getElementById('logsWrap');
   const logsEl     = document.getElementById('logs');
   const searchEl   = document.getElementById('search');
+  const searchBar  = document.getElementById('searchBar');
   const categoryEl = document.getElementById('category');
   const statsEl    = document.getElementById('stats');
   const matchStats = document.getElementById('matchStats');
@@ -340,6 +428,56 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
   const bottomBtn  = document.getElementById('bottom');
   const nextBtn    = document.getElementById('next');
   const prevBtn    = document.getElementById('prev');
+  const closeSearchBtn = document.getElementById('closeSearch');
+  const optCase  = document.getElementById('optCase');
+  const optWord  = document.getElementById('optWord');
+  const optRegex = document.getElementById('optRegex');
+
+  // ── Search option state ───────────────────────────────────
+  const searchOpts = { matchCase: false, wholeWord: false, regex: false };
+
+  function toggleOpt(key, btn) {
+    searchOpts[key] = !searchOpts[key];
+    btn.classList.toggle('active', searchOpts[key]);
+    // regex và wholeWord không cần nhau
+    if (key === 'regex' && searchOpts.regex) {
+      searchOpts.wholeWord = false;
+      optWord.classList.remove('active');
+    }
+    if (key === 'wholeWord' && searchOpts.wholeWord) {
+      searchOpts.regex = false;
+      optRegex.classList.remove('active');
+    }
+    scheduleHighlight();
+  }
+
+  optCase.addEventListener('click',  () => toggleOpt('matchCase', optCase));
+  optWord.addEventListener('click',  () => toggleOpt('wholeWord', optWord));
+  optRegex.addEventListener('click', () => toggleOpt('regex',     optRegex));
+
+  // Alt+C / Alt+W / Alt+R shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (!e.altKey) return;
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); toggleOpt('matchCase', optCase); }
+    if (e.key === 'w' || e.key === 'W') { e.preventDefault(); toggleOpt('wholeWord', optWord); }
+    if (e.key === 'r' || e.key === 'R') { e.preventDefault(); toggleOpt('regex',     optRegex); }
+  });
+
+  // ── Search bar open / close ───────────────────────────────
+  function openSearch(prefill) {
+    searchBar.classList.add('open');
+    if (prefill != null) searchEl.value = prefill;
+    searchEl.focus();
+    searchEl.select();
+    scheduleHighlight();
+  }
+
+  function closeSearch() {
+    searchBar.classList.remove('open');
+    searchEl.value = '';
+    applyFilterAndHighlight();
+    logsWrap.focus();
+  }
 
   // ── State ─────────────────────────────────────────────────
   let logs            = [];   // [{session, category, output(raw)}]
@@ -439,11 +577,18 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
   // ── Search helpers ────────────────────────────────────────
   function parseQuery(q) {
     if (!q) return null;
-    if (q.startsWith('/') && q.lastIndexOf('/') > 0) {
-      const last = q.lastIndexOf('/');
-      try { return new RegExp(q.slice(1, last), q.slice(last + 1)); } catch (_) {}
+    if (searchOpts.regex) {
+      try { return new RegExp(q, searchOpts.matchCase ? 'g' : 'gi'); } catch (_) { return null; }
     }
-    return q;
+    if (searchOpts.wholeWord) {
+      const escaped = q.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+      const flags = searchOpts.matchCase ? 'g' : 'gi';
+      try { return new RegExp('\\b' + escaped + '\\b', flags); } catch (_) {}
+    }
+    // Plain text — wrap into regex so we can honour matchCase easily
+    const escaped = q.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+    const flags = searchOpts.matchCase ? 'g' : 'gi';
+    return new RegExp(escaped, flags);
   }
 
   function findSearchMatches(plain, query) {
@@ -567,7 +712,9 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
 
   function createLineEl(item, query) {
     const div = document.createElement('div');
-    div.className = 'line ' + item.category;
+    // ansiSource: color comes from ANSI codes inside the text → add 'ansi-source' to
+    // suppress the category color override and let parseAnsi() use VS Code theme colors.
+    div.className = 'line ' + item.category + (item.ansiSource ? ' ansi-source' : '');
     div.dataset.category = item.category;
     if (query) {
       const { html } = renderLineHtml(item.output, query);
@@ -694,30 +841,39 @@ class ConsoleViewProvider implements vscode.WebviewViewProvider {
   }
 
   // ── Event listeners ───────────────────────────────────────
+  // Auto-resize select to fit selected option text
+  function resizeSelect() {
+    const tmp = document.createElement('canvas');
+    const ctx = tmp.getContext('2d');
+    ctx.font = getComputedStyle(categoryEl).font;
+    const text = categoryEl.options[categoryEl.selectedIndex]?.text ?? '';
+    categoryEl.style.width = (ctx.measureText(text).width + 36) + 'px';
+  }
+  resizeSelect();
+
   searchEl.addEventListener('input', scheduleHighlight);
-  categoryEl.addEventListener('change', applyFilterAndHighlight);
+  categoryEl.addEventListener('change', () => { resizeSelect(); applyFilterAndHighlight(); });
   clearBtn.addEventListener('click', () => vscode.postMessage({ type: 'clear' }));
   bottomBtn.addEventListener('click', () => { autoStickBottom = true; scrollToBottom(); });
   nextBtn.addEventListener('click', () => setCurrentMatch(currentMatchIdx + 1));
   prevBtn.addEventListener('click', () => setCurrentMatch(currentMatchIdx - 1));
+  closeSearchBtn.addEventListener('click', closeSearch);
   logsWrap.addEventListener('scroll', () => { autoStickBottom = isNearBottom(); });
 
-  // Enter / Shift+Enter keyboard navigation
+  // Enter / Shift+Enter → navigate matches  |  ESC → close search
   searchEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeSearch(); return; }
     if (e.key !== 'Enter') return;
     e.preventDefault();
     setCurrentMatch(e.shiftKey ? currentMatchIdx - 1 : currentMatchIdx + 1);
   });
 
-  // Cmd+E / Ctrl+E → dùng text đang bôi đen làm search query (giống VSCode "Use Selection for Find")
+  // Cmd+F / Ctrl+F → mở search bar, điền selection nếu có
   document.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.key !== 'f') return;
-    const sel = window.getSelection()?.toString().trim();
-    if (!sel) return;
     e.preventDefault();
-    searchEl.value = sel;
-    searchEl.focus();
-    scheduleHighlight();
+    const sel = window.getSelection()?.toString().trim() || null;
+    openSearch(sel);
   });
 
   // Click file links → postMessage to extension host
@@ -780,6 +936,90 @@ function getNonce() {
   return text;
 }
 
+/** Strip ANSI SGR sequences so pattern matching works on visible text. */
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+/** Dart compiler / analyzer error or context header line. */
+function isDartCompileLine(output: string): boolean {
+  return /\.dart:\d+:\d+:.*\b(Error|Context)\b/i.test(stripAnsi(output));
+}
+
+/**
+ * Layer 1: classify by ANSI escape color embedded by the tool itself.
+ * - Dart compiler colors errors red, warnings yellow.
+ * - logger package uses 256-color: 196/199 (red/pink) for e/f, 208 (orange) for w.
+ * Returns 'stderr' | 'warn' | null (null = no ANSI color hint found).
+ */
+function classifyByAnsi(output: string): 'stderr' | 'warn' | null {
+  // Basic red (31), bright red (91), 256-color red (196) / pink (199) — errors & fatals
+  if (/\x1b\[(?:31|91)m/.test(output) || /\x1b\[38;5;(?:196|199)m/.test(output)) {
+    return 'stderr';
+  }
+  // Basic yellow (33), bright yellow (93), 256-color orange (208) — warnings
+  if (/\x1b\[(?:33|93)m/.test(output) || /\x1b\[38;5;208m/.test(output)) {
+    return 'warn';
+  }
+  return null;
+}
+
+/**
+ * Layer 2: classify by text pattern (fallback when ANSI is absent, e.g. logcat strips it).
+ * Returns 'stderr' | 'warn' | null.
+ */
+function classifyByPattern(output: string): 'stderr' | 'warn' | null {
+  const text = stripAnsi(output);
+  // ── Errors ──────────────────────────────────────────────────────────────
+  const isError =
+    // Android logcat — ALL E/flutter & F/flutter (logcat 'E' priority, ANSI stripped)
+    /^[EF]\/flutter\s*\(\s*\d+\s*\):/.test(text) ||
+    /^E\/AndroidRuntime\s*\(\s*\d+\s*\):/.test(text) ||
+    /^FATAL EXCEPTION:/.test(text) ||
+    // Flutter framework error box
+    /══╡ EXCEPTION CAUGHT BY/.test(text) ||
+    /^The following .+ (was thrown|error occurred)/.test(text) ||
+    /^Another exception was thrown:/.test(text) ||
+    // Dart VM / iOS (no logcat prefix)
+    /^flutter: Unhandled Exception:/.test(text) ||
+    /^flutter: (Exception|Error|FormatException|StateError|RangeError|TypeError|NoSuchMethodError|ArgumentError|AssertionError|NullThrownError|StackOverflowError|ConcurrentModificationError|UnsupportedError):/.test(text) ||
+    // Dart compiler/analyzer — ANSI may sit between line:col and "Error:"
+    /\.dart:\d+:\d+:.*\bError\b/i.test(text) ||
+    /\.dart:\d+:\d+:.*\bContext\b/i.test(text) ||
+    // Riverpod
+    /\bProviderException\b/.test(text) ||
+    /\bCircularDependencyError\b/.test(text) ||
+    // logger package emoji fallback (when colors: false)
+    /[⛔👾]/.test(text);
+
+  if (isError) return 'stderr';
+
+  // ── Warnings ────────────────────────────────────────────────────────────
+  const isWarn =
+    /^W\/flutter\s*\(\s*\d+\s*\):/.test(text) ||
+    /\.dart:\d+:\d+:.*\bWarning\b/i.test(text) ||
+    // logger package emoji fallback
+    /⚠/.test(text);
+
+  if (isWarn) return 'warn';
+
+  return null;
+}
+
+/**
+ * Main classifier: ANSI layer first (most accurate), then pattern layer (fallback).
+ * Returns category + whether color came from ANSI (so webview can let parseAnsi drive rendering).
+ */
+function classifyCategory(output: string, base: string): { category: string; ansiSource: boolean } {
+  if (base === 'stderr') return { category: 'stderr', ansiSource: false };
+  const ansi = classifyByAnsi(output);
+  if (ansi) return { category: ansi, ansiSource: true };
+  const pattern = classifyByPattern(output);
+  if (pattern) return { category: pattern, ansiSource: false };
+  if (/^\[log\]/.test(output)) return { category: 'network', ansiSource: false };
+  return { category: base, ansiSource: false };
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const store    = new FlutterConsoleStore();
   const provider = new ConsoleViewProvider(context, store);
@@ -807,6 +1047,12 @@ export function activate(context: vscode.ExtensionContext) {
       const cfg = vscode.workspace.getConfiguration('flutterDebuggerPlus');
       if (cfg.get<boolean>('onlyFlutterDart', true) && !isFlutterOrDartSession(session)) return undefined;
 
+      // Tracks whether we are inside a [log] network block so that
+      // body/curl continuation lines (without [log] prefix) inherit the network color.
+      let networkBlock = false;
+      // Tracks Dart compile error blocks (source snippets, ^^^ carets, etc.)
+      let compileErrorBlock = false;
+
       return {
         onDidSendMessage(message: unknown) {
           const msg = message as Record<string, unknown>;
@@ -814,9 +1060,42 @@ export function activate(context: vscode.ExtensionContext) {
           const body = (msg.body ?? {}) as Record<string, unknown>;
           const output = String(body.output ?? '');
           if (!output) return;
+          const base = String(body.category ?? 'console');
+          const stripped = stripAnsi(output);
+          let { category, ansiSource } = classifyCategory(output, base);
+
+          // Close blocks on independent log lines
+          if (/^[A-Z]\/\w+\s*\(\s*\d+/.test(stripped) || /^Reloaded \d+ libraries/.test(stripped)) {
+            networkBlock = false;
+            compileErrorBlock = false;
+          }
+
+          if (isDartCompileLine(output)) {
+            compileErrorBlock = true;
+            networkBlock = false;
+            category = 'stderr';
+            ansiSource = false;
+          } else if (/^\[log\]/.test(stripped)) {
+            networkBlock = true;
+            compileErrorBlock = false;
+          } else if (compileErrorBlock && category === base) {
+            category = 'stderr';
+            ansiSource = false;
+          } else if (category === 'network') {
+            networkBlock = true;
+            compileErrorBlock = false;
+          } else if (networkBlock && category === base) {
+            category = 'network';
+            ansiSource = false;
+          } else if (category !== base) {
+            networkBlock = false;
+            if (category !== 'stderr' && category !== 'warn') compileErrorBlock = false;
+          }
+
           store.add({
             session: session.name,
-            category: String(body.category ?? 'console'),
+            category,
+            ansiSource,
             output,
           });
         }

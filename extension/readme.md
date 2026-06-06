@@ -1,65 +1,33 @@
 # Flutter Debugger Plus
 
-Panel **Flutter Console+** hiển thị log Flutter/Dart debug với màu sắc chuẩn VSCode, ANSI color, click để mở đúng file/dòng, và search nhanh — nằm ngay cạnh Terminal, Debug Console, Output ở bottom panel.
+A searchable Flutter/Dart debug console with native VSCode colors, ANSI support, clickable file links, and a VSCode-style find bar — docked in the bottom panel alongside Terminal, Output, and Debug Console.
 
-## Vị trí hiển thị
+## Features
 
-Panel **Flutter Console+** nằm ở khu vực bottom panel của VS Code, cùng hàng với:
+### 🎨 Native Debug Console Colors
 
-- Problems · Output · Debug Console · Terminal
+Log categories are styled with the same CSS variables VSCode uses internally, adapting automatically to any theme.
 
-> VS Code không cho extension nhúng UI trực tiếp vào tab `Debug Console` mặc định. Cách chuẩn API là tạo một panel view container riêng trong cùng khu vực.
+### 🌈 ANSI Color Support
 
-## Tính năng
+Parses `\x1b[...m` escape sequences and renders them using VSCode's terminal color palette. Supports **bold**, dim, *italic*, and underline.
 
-### 🎨 Màu sắc log chuẩn Debug Console
+### 🔗 Clickable File Links
 
-Màu sắc theo đúng CSS variables native của VSCode, tự động thích nghi với mọi theme (dark/light/custom):
+Detects file references in log output and makes them clickable.
 
-| Category | Màu |
-|---|---|
-| `stdout` / `console` | `--vscode-debugConsole-infoForeground` |
-| `stderr` | `--vscode-debugConsole-errorForeground` |
-| `warn` | `--vscode-debugConsole-warningForeground` |
-| `telemetry` | `--vscode-debugConsole-sourceForeground` (mờ hơn) |
-| `important` | Info color + **bold** |
+### 🔍 Find Bar (Cmd+F / Ctrl+F)
 
-### 🌈 ANSI color support
-
-Parse escape sequence `\x1b[...m` và render đúng màu terminal của VSCode:
-
-- 16 màu foreground (30–37, 90–97) dùng `--vscode-terminal-ansiRed`, `--vscode-terminal-ansiBrightGreen`, v.v.
-- Hỗ trợ: **bold**, dim, *italic*, underline — reset từng thuộc tính hoặc reset toàn bộ
-
-### 🔗 Click file link mở đúng dòng
-
-Tự detect pattern trong log và tạo link có thể click:
-
-- `package:demo/main.dart:70:14` → mở `lib/main.dart` dòng 70, cột 14
-- `package:flutter/src/widgets/framework.dart:1199` → mở đúng file trong Flutter SDK
-- `lib/screens/home.dart:42:8` → mở theo workspace-relative path
-- `/absolute/path/file.dart:10` → mở theo absolute path
-
-Thứ tự resolve (chính xác 100%):
-
-1. Lookup `.dart_tool/package_config.json` — map tên package → đường dẫn tuyệt đối trên disk (project files, Flutter SDK, pub packages đều chính xác)
-2. Absolute path
-3. Workspace-relative
-4. `findFiles` fallback — ưu tiên project files, tìm rộng hơn nếu không thấy
-
-### ⌨️ Search & Navigation
-
-- Search text hoặc regex: `/error|exception/i`
-- `Enter` → match tiếp theo, `Shift+Enter` → match trước (giống VSCode Find)
-- Bôi đen text → `Cmd+F` / `Ctrl+F` → tự điền vào search box
-- Nút `▲` / `▼` trên toolbar
-- Filter theo category: `stdout`, `stderr`, `console`, `warn`, `telemetry`, `important`
+- **Match Case** · **Whole Word** · **Regular Expression** toggles
+- `Enter` → next match, `Shift+Enter` → previous
+- Select text then `Cmd+F` to search the selection
+- `ESC` or `✕` to close
 
 ### ⚡ Performance
 
-- Batch render qua `requestAnimationFrame` — không lag khi log đổ nhiều
-- Auto stick-to-bottom, tự dừng khi scroll lên
-- Giữ tối đa `maxLines` dòng trong bộ nhớ
+- Batched rendering via `requestAnimationFrame`
+- Auto scroll-to-bottom, pauses when scrolled up
+- Configurable max log lines in memory
 
 ## Settings
 
@@ -71,8 +39,15 @@ Thứ tự resolve (chính xác 100%):
 }
 ```
 
-| Setting | Default | Mô tả |
-|---|---|---|
-| `autoRevealOnFlutterDebug` | `true` | Tự mở panel khi bắt đầu debug Flutter/Dart |
-| `onlyFlutterDart` | `true` | Chỉ bắt log từ session Dart/Flutter, tắt để bắt tất cả |
-| `maxLines` | `5000` | Số dòng log tối đa giữ trong bộ nhớ |
+
+| Setting                    | Default | Description                                                               |
+| -------------------------- | ------- | ------------------------------------------------------------------------- |
+| `autoRevealOnFlutterDebug` | `true`  | Auto-open the panel when a Flutter/Dart debug session starts              |
+| `onlyFlutterDart`          | `true`  | Capture only Dart/Flutter sessions; disable to capture all debug adapters |
+| `maxLines`                 | `5000`  | Maximum number of log lines kept in memory                                |
+
+## Project Details
+
+- **Repository:** [arthurtran01/flutter-debugger-plus](https://github.com/arthurtran01/flutter-debugger-plus)
+- **Issues:** [Report a bug](https://github.com/arthurtran01/flutter-debugger-plus/issues)
+
